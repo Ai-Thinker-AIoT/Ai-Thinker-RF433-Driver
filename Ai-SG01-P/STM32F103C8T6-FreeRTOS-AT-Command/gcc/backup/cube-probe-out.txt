@@ -1,0 +1,11 @@
+      -------------------------------------------------------------------
+                       STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+
+
+Log output file:   C:\Users\Ai\Desktop\STM32F103C8T6-FREERTOS-AISG01-AT\gcc\backup\cube-uart-probe.log
+Serial Port COM30 is successfully opened.
+Port configuration: parity = even, baudrate = 115200, data-bit = 8,                     stop-bit = 1.0, flow-control = off
+Timeout error occured while waiting for acknowledgement.
+Error: Activating device: KO. Please, verify the boot mode configuration and check the serial port configuration. Reset your device then try again... 
