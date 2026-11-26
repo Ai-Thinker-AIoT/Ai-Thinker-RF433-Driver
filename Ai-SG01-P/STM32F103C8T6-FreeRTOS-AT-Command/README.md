@@ -53,7 +53,7 @@ STM32F103C8T6-FreeRTOS-AT-Command/
 
 - 射频默认：490.3 MHz、2FSK、50 kbps、±25 kHz 频偏、`POWER_LDO_0402` + `POWER_20dBm`，配置存 Flash `0x0800FC00`。
 - AT 指令集与裸机版相同：`AT+RFMODE`、`AT+FREQUENCYBASE`、`AT+DATARATE`、`AT+TXSTART/TXSTOP`、`AT+ENTERCARRIER`、`AT+FTMASTER/FTSLAVE`、`AT+CONFIGSAVE/RESET` 等。
-- 本工程**没有** PINGPONG 自动对测，也没有开机自动单载波；需要时用同目录的 [`../STM32F103C8T6-FreeRTOS-PingPong/`](../STM32F103C8T6-FreeRTOS-PingPong/)、[`../STM32F103C8T6-FreeRTOS-Single-Carrier/`](../STM32F103C8T6-FreeRTOS-Single-Carrier/)。
+- 本工程**没有** PINGPONG 自动对测，也没有开机自动单载波；需要时用同目录的 [`../STM32F103C8T6-FreeRTOS-Demo/`](../STM32F103C8T6-FreeRTOS-Demo/)、[`../STM32F103C8T6-FreeRTOS-Single-Carrier/`](../STM32F103C8T6-FreeRTOS-Single-Carrier/)。
 
 ## 5. 编译与烧录
 
