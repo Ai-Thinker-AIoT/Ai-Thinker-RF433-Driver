@@ -1,5 +1,7 @@
 # Ai-Thinker RF433 接线说明
 
+[English](wiring.md)
+
 本文记录 `Ai-SG01/` 与 `Ai-SG01-P/` 下各工程与模组的接线，格式与 2.4G 仓库的 `docs/wiring.zh-CN.md` 一致。
 
 ## PAN3120（Ai-SG01 / Ai-SG01-P）
