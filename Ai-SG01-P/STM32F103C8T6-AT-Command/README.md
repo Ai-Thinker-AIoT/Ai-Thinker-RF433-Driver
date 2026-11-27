@@ -1,77 +1,79 @@
-# Ai-SG01-P(PAN3120 + GC1131) on STM32F103C8T6 —— AT 指令固件
+# Ai-SG01-P (PAN3120 + GC1131) on STM32F103C8T6 — AT Command Firmware
 
-Ai-SG01-P 模组的 AT 指令固件。AT 框架与 Ai-SG01 版相同，额外驱动 GC1131 射频前端（PA/LNA），并把功率上报口径换算到前端输出端。
+[![中文](https://img.shields.io/badge/中文-README-blue)](README.zh-CN.md)
 
-- 模组：Ai-SG01-P（PAN3120 + GC1131）
-- MCU：STM32F103C8T6，HSE 8 MHz → PLL ×9 → 72 MHz
-- 工程：STM32CubeMX 生成 + Keil uVision5（`ARM-ADS`），`MDK-ARM/Ai-SG01-P.uvprojx`
-- 调试串口：USART1 = PA9 / PA10，115200-8-N-1
-- 固件版本：`V4.18_P1.1.2`
+AT command firmware for the Ai-SG01-P module. The AT framework is the same as the Ai-SG01 version, but it additionally drives the GC1131 RF front end (PA/LNA) and converts the reported power to the front-end output.
+
+- Module: Ai-SG01-P (PAN3120 + GC1131)
+- MCU: STM32F103C8T6, HSE 8 MHz → PLL ×9 → 72 MHz
+- Project: STM32CubeMX + Keil uVision5 (`ARM-ADS`), `MDK-ARM/Ai-SG01-P.uvprojx`
+- Debug UART: USART1 = PA9 / PA10, 115200-8-N-1
+- Firmware version: `V4.18_P1.1.2`
 
 ---
 
-## 1. 目录结构
+## 1. Layout
 
 ```
 STM32F103C8T6-AT-Command/
 ├── Ai-SG01-P.ioc / .mxproject
-├── MDK-ARM/                   # Ai-SG01-P.uvprojx、startup_stm32f103xb.s
+├── MDK-ARM/                   # Ai-SG01-P.uvprojx, startup_stm32f103xb.s
 ├── Core/Src/
-│   ├── at_command_firmware.c  # AT 固件主体，启动时调 bsp_InitGC1131()
+│   ├── at_command_firmware.c  # AT firmware core, calls bsp_InitGC1131() at boot
 │   └── stm32f1xx_hal_msp.c / stm32f1xx_it.c / system_stm32f1xx.c
-├── BSP/                       # 含 bsp_gc1131.c/.h（GC1131 模式控制）
-├── PAN312x/                   # PAN312x 驱动 + HAL 适配（P 版 GPIO 重映射）
+├── BSP/                       # includes bsp_gc1131.c/.h (GC1131 mode control)
+├── PAN312x/                   # PAN312x driver + HAL adaptation (P-variant GPIO remap)
 ├── Drivers/
-└── (AT 手册在仓库根 [`docs/Ai-SG01-P-AT-Commands.docx`](../../docs/Ai-SG01-P-AT-Commands.docx))
+└── (AT manual at repo root [`Docs/Ai-SG01-P-AT-Commands.docx`](../../Docs/Ai-SG01-P-AT-Commands.docx))
 ```
 
-## 2. 引脚
+## 2. Pins
 
-| 信号 | STM32F103C8T6 | 说明 |
-|------|---------------|------|
-| CSN | PA4 | PAN3120 片选 |
+| Signal | STM32F103C8T6 | Note |
+|--------|---------------|------|
+| CSN | PA4 | PAN3120 chip select |
 | SCK / MISO / MOSI | PA5 / PA6 / PA7 | SPI1 |
-| nRST | PB14 | P 版复位脚（普通版为 PB0） |
-| DIO8 / IRQ | PB1 | 中断输入 |
-| GC1131 CPS | PB0 | 省电/旁路控制 |
-| GC1131 CSD | PB11 | 前端使能 |
-| GC1131 CTX | PA11（GPIO2） | 收发切换 |
-| DIO0 / DIO2 / DIO10 | — | P 版不再使用 |
+| nRST | PB14 | reset pin on the P variant (PB0 on the plain version) |
+| DIO8 / IRQ | PB1 | interrupt input |
+| GC1131 CPS | PB0 | power-save / bypass control |
+| GC1131 CSD | PB11 | front-end enable |
+| GC1131 CTX | PA11 (GPIO2) | TX/RX switch |
+| DIO0 / DIO2 / DIO10 | — | unused on the P variant |
 
-USART1：PA9 / PA10。GC1131 四种模式：`SHUTDOWN` / `RECEIVE` / `TRANSMIT_BYPASS` / `TRANSMIT`，由 `bsp_gc1131.c` 按收发状态切换。
+USART1: PA9 / PA10. GC1131 has four modes — `SHUTDOWN` / `RECEIVE` / `TRANSMIT_BYPASS` / `TRANSMIT` — switched by `bsp_gc1131.c` according to the TX/RX state.
 
-## 3. 与 Ai-SG01 版的差异
+## 3. Differences from the Ai-SG01 version
 
-| 项目 | Ai-SG01 | Ai-SG01-P |
+| Item | Ai-SG01 | Ai-SG01-P |
 |------|---------|-----------|
-| 射频前端 | 无 | GC1131（PA/LNA） |
-| 功率上报 | 芯片设定值 | 叠加 `POWER_OFFSET 27` dB 后打印 `+POWERDBM` |
-| `+POWERSELECT` | 只切电感档 | 同时约束功率档，非法组合返回 `+POWERDBM:4` |
-| 启动 | `bsp_Init()` | `bsp_Init()` + `bsp_InitGC1131()` |
-| 复位脚 | PB0 | PB14 |
+| RF front end | none | GC1131 (PA/LNA) |
+| Power reporting | chip setting | chip setting + `POWER_OFFSET 27` dB, printed by `+POWERDBM` |
+| `+POWERSELECT` | inductor tier only | also constrains the power tier; illegal combinations return `+POWERDBM:4` |
+| Startup | `bsp_Init()` | `bsp_Init()` + `bsp_InitGC1131()` |
+| Reset pin | PB0 | PB14 |
 
-## 4. 默认射频参数
+## 4. Default RF settings
 
-| 项目 | 默认值 |
-|------|--------|
-| 频率 | 490.3 MHz（`490300000` Hz） |
-| 调制 | 2FSK |
-| 速率 | 50 kbps |
-| 频偏 | 25 kHz |
-| 功率档 | `POWER_LDO_0402` + `POWER_20dBm` |
-| 配置存储 | Flash `0x0800FC00`，带 CRC |
+| Item | Default |
+|------|---------|
+| Frequency | 490.3 MHz (`490300000` Hz) |
+| Modulation | 2FSK |
+| Data rate | 50 kbps |
+| Deviation | 25 kHz |
+| Power tier | `POWER_LDO_0402` + `POWER_20dBm` |
+| Config storage | Flash `0x0800FC00`, CRC protected |
 
-AT 指令集与 Ai-SG01 版一致（`AT+RFMODE`、`AT+FREQUENCYBASE`、`AT+DATARATE`、`AT+POWERDBM`、`AT+POWERSELECT`、`AT+ENTERCARRIER`、`AT+FTMASTER/FTSLAVE`、`AT+CONFIGSAVE` 等），详见仓库根目录 [`docs/Ai-SG01-P-AT-Commands.docx`](../../docs/Ai-SG01-P-AT-Commands.docx)。
+The AT command set is identical to the Ai-SG01 version (`AT+RFMODE`, `AT+FREQUENCYBASE`, `AT+DATARATE`, `AT+POWERDBM`, `AT+POWERSELECT`, `AT+ENTERCARRIER`, `AT+FTMASTER/FTSLAVE`, `AT+CONFIGSAVE`, and so on); see [`Docs/Ai-SG01-P-AT-Commands.docx`](../../Docs/Ai-SG01-P-AT-Commands.docx).
 
-## 5. 编译与烧录
+## 5. Build and flash
 
-1. Keil 打开 `MDK-ARM/Ai-SG01-P.uvprojx`，Device `STM32F103C8`，`USE_HAL_DRIVER,STM32F103xB`。
-2. Rebuild（OutputName `Ai-SG01-P`，已勾选 Create HEX File）。
-3. ST-LINK 烧录，3V3 / SWCLK / SWDIO / GND。
-4. 上电串口应能看到固件版本与 GC1131 初始化结果，再发 `AT+HELP` 验证。
+1. Open `MDK-ARM/Ai-SG01-P.uvprojx` in Keil, Device `STM32F103C8`, defines `USE_HAL_DRIVER,STM32F103xB`.
+2. Rebuild (OutputName `Ai-SG01-P`, Create HEX File enabled).
+3. Flash with ST-LINK: 3V3 / SWCLK / SWDIO / GND.
+4. On power-up the UART should print the firmware version and the GC1131 init result; send `AT+HELP` to verify.
 
-## 6. 备注
+## 6. Notes
 
-- **不要**把本固件烧到普通 Ai-SG01：它会去驱动不存在的 CPS/CSD/CTX 引脚，前端状态无法确认。
-- 功率读数 = 芯片设定 + 27 dB 偏移，只用于同型号横向比较，不是校准后的绝对功率；认证测试须用频谱仪实测。
-- 无前端版工程见 [`../../Ai-SG01/STM32F103C8T6-AT-Command/`](../../Ai-SG01/STM32F103C8T6-AT-Command/)。
+- Do **not** flash this firmware onto a plain Ai-SG01: it drives CPS/CSD/CTX pins that do not exist there, so the front-end state cannot be confirmed.
+- Power reading = chip setting + 27 dB offset. It is for side-by-side comparison within the same model, not a calibrated absolute value; certification measurements must be taken with a spectrum analyser.
+- The version without the front end is in [`../../Ai-SG01/STM32F103C8T6-AT-Command/`](../../Ai-SG01/STM32F103C8T6-AT-Command/).

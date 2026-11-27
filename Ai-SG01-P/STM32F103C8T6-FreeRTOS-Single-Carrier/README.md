@@ -1,93 +1,95 @@
-# Ai-SG01(PAN3120) on STM32F103C8T6 + FreeRTOS —— 单载波（CW）测试
+# Ai-SG01 (PAN3120) on STM32F103C8T6 + FreeRTOS — Single-Carrier (CW) Test
 
-FreeRTOS + AT 固件，打开 `CARRIER_AUTO_ON_BOOT` 后**上电直接进入未调制单载波**（等同 `AT+ENTERCARRIER` 的状态并保持），用于载波功率、频率容限、杂散测试；FreeRTOS 照常调度，用来证明带调度器时射频状态不被改写。
+[![中文](https://img.shields.io/badge/中文-README-blue)](README.zh-CN.md)
 
-- 模组：Ai-SG01（PAN3120，普通版引脚：nRST = PB0，不含 GC1131 前端驱动）
-- MCU：STM32F103C8T6，72 MHz
-- 工程：Keil MDK，`Project.uvprojx`，ARM-GNU 工具链
-- 串口：USART1 = PA9 / PA10，115200-8-N-1
+FreeRTOS plus the AT firmware with `CARRIER_AUTO_ON_BOOT` enabled: **on power-up it enters an unmodulated single carrier** (the same state as `AT+ENTERCARRIER`, held indefinitely) for carrier power, frequency tolerance and spurious measurements. The scheduler keeps running, which demonstrates that the RF state is not rewritten when an RTOS is present.
+
+- Module: Ai-SG01 (PAN3120, plain pinout: nRST = PB0, no GC1131 front-end driver)
+- MCU: STM32F103C8T6, 72 MHz
+- Project: Keil MDK, `Project.uvprojx`, ARM-GNU toolchain
+- UART: USART1 = PA9 / PA10, 115200-8-N-1
 
 ---
 
-## 1. 目录结构
+## 1. Layout
 
 ```
 STM32F103C8T6-FreeRTOS-Single-Carrier/
 ├── Project.uvprojx
-├── build.cmd                  # 一键 GCC 构建（clean 参数可全量重编）
-├── gcc/                       # 启动文件、链接脚本、syscalls、build.ps1 + 构建日志
+├── build.cmd                  # one-shot GCC build (clean rebuilds all)
+├── gcc/                       # startup file, linker script, syscalls, build.ps1
 ├── Start/ Library/ hal_compat/
 ├── BSP/ PAN312x/ FreeRTOS/
 ├── User/
 │   ├── main.c
-│   ├── carrier_config.h       # CARRIER_AUTO_ON_BOOT（默认 1）
-│   ├── pingpong_config.h      # Demo 角色保留，CW 模式下不生效
-│   ├── at_command_firmware.c  # 固件主体 + Carrier_Enter_*
+│   ├── carrier_config.h       # CARRIER_AUTO_ON_BOOT (default 1)
+│   ├── pingpong_config.h      # Demo role kept, inactive in CW mode
+│   ├── at_command_firmware.c  # firmware core + Carrier_Enter_*
 │   └── stm32f10x_it.c / stm32f10x_conf.h
 └── Objects/
 ```
 
-## 2. 引脚
+## 2. Pins
 
-| 信号 | STM32F103C8T6 |
-|------|---------------|
+| Signal | STM32F103C8T6 |
+|--------|---------------|
 | CSN / SCK / MISO / MOSI | PA4 / PA5 / PA6 / PA7 |
 | nRST | PB0 |
 | DIO8 / IRQ | PB1 |
-| 其余 DIO / GPIO | PB10、PB11、PA11、PA12、PB14 |
+| other DIO / GPIO | PB10, PB11, PA11, PA12, PB14 |
 | GREEN_LED / BLUE_LED | PA8 / PB15 |
 | USART1 | PA9 / PA10 |
 
-## 3. 载波配置
+## 3. Carrier configuration
 
-[`User/carrier_config.h`](User/carrier_config.h)：
+[`User/carrier_config.h`](User/carrier_config.h):
 
 ```c
-#define CARRIER_AUTO_ON_BOOT   1   // 1 = 上电进 CW；0 = 回到 Demo 自动对测
+#define CARRIER_AUTO_ON_BOOT   1   // 1 = enter CW at boot; 0 = back to the Demo auto test
 ```
 
-启动时 `Carrier_Enter_Default()` 会停掉 Timer1 / Timer2、关闭 PINGPONG 状态机、清唤醒标志，再进 `Carrier_Enter_Now()` 并置 `g_carrier_active`，之后禁止其它机制改写 RF 工作状态。
+At startup `Carrier_Enter_Default()` stops Timer1 / Timer2, shuts down the PINGPONG state machine, clears the wake-up flag, then calls `Carrier_Enter_Now()` and sets `g_carrier_active`, after which no other mechanism may rewrite the RF state.
 
-| 项目 | 值 |
-|------|-----|
-| 频率 | 490.3 MHz（`FrequencyBase = 490300000`） |
-| 调制 | 2FSK（CW 时不加载调制数据） |
-| 速率 / 频偏 | 50 kbps / 25 kHz（CW 下不体现） |
-| 功率 | `POWER_LDO_0402` + `POWER_20dBm` |
-| 配置 | Flash `0x0800FC00`，带 CRC |
+| Item | Value |
+|------|-------|
+| Frequency | 490.3 MHz (`FrequencyBase = 490300000`) |
+| Modulation | 2FSK (no modulation data loaded in CW) |
+| Data rate / deviation | 50 kbps / 25 kHz (not visible in CW) |
+| Power | `POWER_LDO_0402` + `POWER_20dBm` |
+| Config | Flash `0x0800FC00`, CRC protected |
 
-## 4. 任务结构
+## 4. Task structure
 
-| 项目 | 值 |
-|------|-----|
-| 任务 | `AiSG01`（Firmware_Task），栈 1024 字，优先级 2 |
-| 堆 | `configTOTAL_HEAP_SIZE = 12 * 1024` |
-| 串口 | 115200-8-N-1，可继续发 AT 查询，但 RF 已锁在载波态 |
+| Item | Value |
+|------|-------|
+| Task | `AiSG01` (Firmware_Task), 1024-word stack, priority 2 |
+| Heap | `configTOTAL_HEAP_SIZE = 12 * 1024` |
+| UART | 115200-8-N-1; AT queries still work, but the RF state is locked in carrier mode |
 
-## 5. 编译与烧录
+## 5. Build and flash
 
-1. Keil 打开 `Project.uvprojx` 直接 Rebuild；或命令行：
+1. Open `Project.uvprojx` in Keil and Rebuild; or from the command line:
 
 ```powershell
-.\build.cmd          # 编译
-.\build.cmd clean    # 全量重编
+.\build.cmd          # build
+.\build.cmd clean    # full rebuild
 ```
 
-2. 产物 `gcc/build/Project.elf` / `Project.hex`（Keil 构建则在 `Objects/`）。
-3. ST-LINK 下载，上电即持续输出载波；接频谱仪看频率、功率与杂散。
+2. Output `gcc/build/Project.elf` / `Project.hex` (Keil builds put them in `Objects/`).
+3. Download with ST-LINK; the carrier starts at power-up. Connect a spectrum analyser to check frequency, power and spurious emissions.
 
-## 6. 频谱实测（窄带扫频）
+## 6. Spectrum measurement (narrow-span sweep)
 
-Keysight 扫频式频谱仪，Ref 30 dBm / 10 dB/div / 衰减 40 dB，中心 490.30 MHz、Span 25 kHz、RBW = VBW 240 Hz；标记 `Mkr1 490.297778 MHz`，峰值 **24.73 dBm**。
+Keysight swept spectrum analyser, Ref 30 dBm / 10 dB/div / 40 dB attenuation, centre 490.30 MHz, span 25 kHz, RBW = VBW 240 Hz; marker `Mkr1 490.297778 MHz`, peak **24.73 dBm**.
 
-![STM32 单载波，490.30 MHz / 24.73 dBm](../../Assets/4.jpg)
+![STM32 single carrier, 490.30 MHz / 24.73 dBm](../../Assets/4.jpg)
 
-- 单根谱线、无调制旁瓣，符合 CW 预期；OBW 必须用调制连续发射另测。
-- 比 AI8051U 单载波工程高约 1.2 dB，比较时保持同一块板、同一天线、同一功率档。
-- 实测频点比设定低约 2.4 kHz，属晶振误差，报告按实测值记录。
+- A single line with no modulation sidebands, as expected for CW; OBW must be measured separately with continuous modulated transmission.
+- About 1.2 dB higher than the AI8051U single-carrier project; compare on the same board, antenna and power tier.
+- The measured frequency is about 2.4 kHz below the setting, within crystal tolerance; use the measured value in the report.
 
-## 7. 备注
+## 7. Notes
 
-- 未调制载波只有单根谱线，**不能**用来测占用带宽；OBW 需要调制连续发射，本工程不提供。
-- 已存过 Flash 配置的板子会读回旧频点/功率，换参数先 `AT+CONFIGRESET` 或改 `DeviceConfig_Init()` 默认值再烧。
-- 本工程按普通 Ai-SG01 引脚定义，不含 GC1131 前端驱动；P 版硬件请用 [`../STM32F103C8T6-AT-Command/`](../STM32F103C8T6-AT-Command/)。
+- An unmodulated carrier is a single line and **cannot** be used for occupied bandwidth; OBW needs continuous modulated transmission, which this project does not provide.
+- Boards that already saved a Flash config read back the old frequency/power; run `AT+CONFIGRESET` or change the `DeviceConfig_Init()` defaults before flashing.
+- This project uses the plain Ai-SG01 pinout and does not include the GC1131 front-end driver; for P-variant hardware use [`../STM32F103C8T6-AT-Command/`](../STM32F103C8T6-AT-Command/).

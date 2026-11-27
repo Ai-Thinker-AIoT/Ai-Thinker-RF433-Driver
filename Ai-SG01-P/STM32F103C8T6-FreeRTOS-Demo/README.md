@@ -1,80 +1,82 @@
-# Ai-SG01(PAN3120) on STM32F103C8T6 + FreeRTOS —— PING/PONG 双板对测
+# Ai-SG01 (PAN3120) on STM32F103C8T6 + FreeRTOS — PING/PONG Two-Board Test
 
-FreeRTOS + AT 固件，内置 PING/PONG 自动对测：上电按角色开始收发，不依赖串口下发指令。两块板一 PING 一 PONG 即可跑通链路。
+[![中文](https://img.shields.io/badge/中文-README-blue)](README.zh-CN.md)
 
-- 模组：Ai-SG01（PAN3120，普通版引脚：nRST = PB0，不含 GC1131 前端驱动）
-- MCU：STM32F103C8T6，72 MHz
-- 工程：Keil MDK，`Project.uvprojx`，Device `STM32F103C8`
-- 串口：USART1 = PA9 / PA10，115200-8-N-1
+FreeRTOS plus the AT firmware, with a built-in automatic PING/PONG test: at power-up the board starts transmitting or receiving by role instead of waiting for UART commands. One PING board and one PONG board are enough to exercise the link.
+
+- Module: Ai-SG01 (PAN3120, plain pinout: nRST = PB0, no GC1131 front-end driver)
+- MCU: STM32F103C8T6, 72 MHz
+- Project: Keil MDK, `Project.uvprojx`, Device `STM32F103C8`
+- UART: USART1 = PA9 / PA10, 115200-8-N-1
 
 ---
 
-## 1. 目录结构
+## 1. Layout
 
 ```
 STM32F103C8T6-FreeRTOS-Demo/
 ├── Project.uvprojx
-├── build.cmd                  # 一键编 PING / PONG（依赖 gcc/build.ps1）
+├── build.cmd                  # one-shot PING / PONG build (uses gcc/build.ps1)
 ├── Start/ Library/ hal_compat/
 ├── BSP/ PAN312x/ FreeRTOS/
 ├── User/
 │   ├── main.c
-│   ├── pingpong_config.h      # 唯一需要改的角色开关
-│   └── at_command_firmware.c  # 固件主体（含 PINGPONG 状态机、AT+PINGPONG）
+│   ├── pingpong_config.h      # the only role switch you need to touch
+│   └── at_command_firmware.c  # firmware core (PINGPONG state machine, AT+PINGPONG)
 └── Objects/
-    ├── Project_PING.hex       # 预编译：PING（发送端）
-    ├── Project_PONG.hex       # 预编译：PONG（接收端）
+    ├── Project_PING.hex       # prebuilt: PING (sender)
+    ├── Project_PONG.hex       # prebuilt: PONG (receiver)
     └── Project.hex
 ```
 
-## 2. 引脚
+## 2. Pins
 
-| 信号 | STM32F103C8T6 |
-|------|---------------|
+| Signal | STM32F103C8T6 |
+|--------|---------------|
 | CSN / SCK / MISO / MOSI | PA4 / PA5 / PA6 / PA7 |
 | nRST | PB0 |
 | DIO8 / IRQ | PB1 |
-| 其余 DIO / GPIO | PB10、PB11、PA11、PA12、PB14 |
+| other DIO / GPIO | PB10, PB11, PA11, PA12, PB14 |
 | GREEN_LED / BLUE_LED | PA8 / PB15 |
 | USART1 | PA9 / PA10 |
 
-## 3. 角色配置
+## 3. Role configuration
 
-[`User/pingpong_config.h`](User/pingpong_config.h) 只有一个变量：
+[`User/pingpong_config.h`](User/pingpong_config.h) has a single setting:
 
 ```c
-#define PINGPONG_ROLE   1    // 0 = PING 发送端，1 = PONG 接收端
+#define PINGPONG_ROLE   1    // 0 = PING sender, 1 = PONG receiver
 ```
 
-- 默认 **1 = PONG**。两块板分别烧 0 和 1。
-- 不想改源码，可直接烧 `Objects/Project_PING.hex` / `Project_PONG.hex`。
-- 运行中可用 `AT+PINGPONG 0|1` 切换，`AT+PINGPONG?` 查询角色与运行状态。
+- Default is **1 = PONG**. Flash one board with 0 and the other with 1.
+- To avoid touching the source, flash `Objects/Project_PING.hex` / `Project_PONG.hex` directly.
+- At runtime `AT+PINGPONG 0|1` switches the role and `AT+PINGPONG?` queries the role and running state.
 
-## 4. 任务与参数
+## 4. Task and parameters
 
-| 项目 | 值 |
-|------|-----|
-| 任务 | `AiSG01`（Firmware_Task），栈 1024 字，优先级 2 |
-| 堆 | `configTOTAL_HEAP_SIZE = 12 * 1024` |
-| 射频 | 490.3 MHz、2FSK、50 kbps、±25 kHz、`POWER_LDO_0402` + `POWER_20dBm` |
-| 发包周期 | 50 ms（`tx_period`） |
+| Item | Value |
+|------|-------|
+| Task | `AiSG01` (Firmware_Task), 1024-word stack, priority 2 |
+| Heap | `configTOTAL_HEAP_SIZE = 12 * 1024` |
+| RF | 490.3 MHz, 2FSK, 50 kbps, ±25 kHz, `POWER_LDO_0402` + `POWER_20dBm` |
+| TX period | 50 ms (`tx_period`) |
 
-## 5. 编译与烧录
+## 5. Build and flash
 
-1. Keil 打开 `Project.uvprojx`，按 `PINGPONG_ROLE` 编两块固件；或用预编译 hex 直接烧。
-2. `build.cmd` 是 GCC 命令行脚本（`build.cmd 0` / `build.cmd 1`），但它调用 `gcc/build.ps1`，**本工程未随附 `gcc/` 目录**；要用命令行构建，先从 [`../STM32F103C8T6-FreeRTOS-AT-Command/gcc/`](../STM32F103C8T6-FreeRTOS-AT-Command/gcc/) 复制一份过来。
-3. ST-LINK 烧录后看串口收发计数：PING 侧发、PONG 侧回，计数同步增长即链路正常。
+1. Open `Project.uvprojx` in Keil and build two images by `PINGPONG_ROLE`, or flash the prebuilt hex files.
+2. `build.cmd` is the GCC command-line script (`build.cmd 0` / `build.cmd 1`), but it calls `gcc/build.ps1` and **this project does not ship a `gcc/` directory**; to build from the command line, copy it from [`../STM32F103C8T6-FreeRTOS-AT-Command/gcc/`](../STM32F103C8T6-FreeRTOS-AT-Command/gcc/) first.
+3. After ST-LINK download watch the counters: PING transmits, PONG replies, and matched growth means the link is healthy.
 
-## 6. 实测日志
+## 6. Measured log
 
-一块板烧 PONG、一块烧 PING，上电自动开跑：`Demo auto-start, role=PONG` / `role=PING`，之后 `PING Tx` 与 `PONG Rx` 计数逐包递增，`Err: 0`。
+One board flashed with PONG and one with PING start automatically: `Demo auto-start, role=PONG` / `role=PING`, then `PING Tx` and `PONG Rx` increment packet by packet with `Err: 0`.
 
-![STM32 FreeRTOS Demo 对测](../../Assets/3.png)
+![STM32 FreeRTOS Demo test](../../Assets/3.png)
 
-- 日志里的 `[DBG]` 行是包级调试输出（mask、FIFO 指针、IRQ 状态、tries），只在调试期打开。
-- 左右两侧计数长期保持同步、没有丢包跳号，即链路稳定。
+- The `[DBG]` lines are packet-level debug output (mask, FIFO pointer, IRQ state, tries) and are enabled only during debugging.
+- The two counters stay in step over a long run with no skipped packets, which indicates a stable link.
 
-## 7. 备注
+## 7. Notes
 
-- 本工程按普通 Ai-SG01 引脚定义，不含 GC1131 前端驱动；P 版硬件请用 [`../STM32F103C8T6-AT-Command/`](../STM32F103C8T6-AT-Command/)。
-- 单载波测试见 [`../STM32F103C8T6-FreeRTOS-Single-Carrier/`](../STM32F103C8T6-FreeRTOS-Single-Carrier/)；纯 AT 版见 [`../STM32F103C8T6-FreeRTOS-AT-Command/`](../STM32F103C8T6-FreeRTOS-AT-Command/)。
+- This project uses the plain Ai-SG01 pinout and does not include the GC1131 front-end driver; for P-variant hardware use [`../STM32F103C8T6-AT-Command/`](../STM32F103C8T6-AT-Command/).
+- CW testing: [`../STM32F103C8T6-FreeRTOS-Single-Carrier/`](../STM32F103C8T6-FreeRTOS-Single-Carrier/); pure AT version: [`../STM32F103C8T6-FreeRTOS-AT-Command/`](../STM32F103C8T6-FreeRTOS-AT-Command/).

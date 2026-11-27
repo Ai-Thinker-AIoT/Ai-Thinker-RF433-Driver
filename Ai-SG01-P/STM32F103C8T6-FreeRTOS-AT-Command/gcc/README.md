@@ -1,167 +1,131 @@
-# 方案 B：不装回 AC5，用 Arm GNU Toolchain 让 Keil 继续编译
+# Option B: keep Keil building with Arm GNU Toolchain instead of reinstalling AC5
 
-本目录是 `Ai-SG01-P/STM32F103C8T6-FreeRTOS-AT` 工程从 **ARM Compiler 5.06u7 (armcc)**
-迁移到 **Arm GNU Toolchain 15.3.1 (arm-none-eabi-gcc)** 的全部新增文件。
-**已在本机实测通过**：μVision 5.40 批处理构建 `0 Error(s)`，生成 `Objects/Project.hex`。
+[![中文](https://img.shields.io/badge/中文-README-blue)](README.zh-CN.md)
 
-## 现在怎么编译
+This directory holds every file added when the `Ai-SG01-P/STM32F103C8T6-FreeRTOS-AT` project was migrated from **ARM Compiler 5.06u7 (armcc)** to the **Arm GNU Toolchain 15.3.1 (arm-none-eabi-gcc)**. **Measured on this machine**: μVision 5.40 batch build gives `0 Error(s)` and produces `Objects/Project.hex`.
 
-- **Keil 里**：直接打开 `Project.uvprojx`，点 `Project → Rebuild`（F7 或魔法棒旁边的 Build）。
-  输出仍是 `.\Objects\Project.elf` / `Project.hex`，调试、下载、Flash 算法配置都不变。
-- **命令行（可复现/做合规留痕）**：在工程根目录执行
+## How to build now
+
+- **In Keil**: open `Project.uvprojx` and press `Project → Rebuild` (F7 or the Build button). The output is still `.\Objects\Project.elf` / `Project.hex`; debugging, download and Flash algorithm settings are unchanged.
+- **Command line** (reproducible, auditable): from the project root
+
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\gcc\build.ps1
   ```
-  产物在 `gcc\build\Project.elf`、`Project.hex`。加 `-Clean` 可全量重编。
 
-两条路用的是同一套源码和同一个编译器，只是入口不同。
+  Output goes to `gcc\build\Project.elf` and `Project.hex`. Add `-Clean` for a full rebuild.
 
-## 改了哪些文件
+Both routes use the same sources and the same compiler; only the entry point differs.
 
-| 文件 | 说明 |
-|---|---|
-| `Project.uvprojx` | 工具集 `ARM-ADS → ARM-GNU`；填入 GNU 模式的宏/头文件路径/编译链接选项；启动文件指向 `gcc/startup_stm32f10x_md.s`；输出目录与 Create HEX 恢复；`pCCUsed` 中残留的 `V5.06 update 7` 字样清掉，避免资产扫描误判。所有 `-Wno-*` 屏蔽项最终都已移除，改为真正修好源码 |
-| `gcc/startup_stm32f10x_md.s` | **新建**。把原 `Start/startup_stm32f10x_md.s`（armasm 语法）翻成 GNU as 语法，中断向量表顺序完全一致；`Reset_Handler` 设栈、复制 `.data`、清 `.bss`、调 `SystemInit` 与 `main` |
-| `gcc/stm32f103c8.ld` | **新建**。替代 armlink 分散加载文件：FLASH 0x08000000/64K，RAM 0x20000000/20K，`_estack = 0x20005000` |
-| `gcc/syscalls.c` | **新建**。newlib 最小系统调用层，`_write()` 把 `printf` 接到 USART1（详见下方"printf 重定向"），并消除 6 条 libnosys 链接警告 |
-| `FreeRTOS/port/port.c`、`portmacro.h` | **替换为 FreeRTOS-Kernel V11.1.0 官方 `portable/GCC/ARM_CM3`**。原来那份是 RVDS/armcc 版，用了 `__asm void vPortSVCHandler` 与 `__weak`，GCC 不认 |
-| `FreeRTOS/FreeRTOSConfig.h` | 显式设 `configCHECK_HANDLER_INSTALLATION = 0`（详见下方说明） |
-| `Start/core_cm3.c` | 3 处 `__STREXB/__STREXH/__STREXW` 内联汇编的输出约束改成 `"=&r"`。CMSIS V1.30 老写法会让 GCC 15 的汇编器报 `registers may not be the same` |
-| `gcc/libs/*.a` | 从工具链拷出的 `libgcc / libc_nano / libm / libnosys`（v7-m/nofp）。因为 Keil 装在含中文的路径 `E:\腾讯电脑管家软件搬家\...`，直接让 ld 去那里取库会失败，统一放到纯 ASCII 路径 |
-| `gcc/backup/` | **改动前的原始文件备份**：`Project.uvprojx.orig`、`port.c.orig`、`portmacro.h.orig`、`startup_stm32f10x_md.s.orig`、`TOOLS.INI.orig`；以及修复后的快照 `PAN312x_Driver.c.fixed`、`at_command_firmware.c.fixed`、`FreeRTOSConfig.h.fixed` |
+## Files changed
 
-`TOOLS.INI` 里 `[ARM] PATH1` 已指向 `C:\Users\Ai\AppData\Local\Keil_v5\ARM\ARMCC\`，
-`TOOLPREFIX=arm-none-eabi-` 保持不变（原先 PATH1 指向一个已不存在的 GCC 9 目录）。
+| File | Description |
+|------|-------------|
+| `Project.uvprojx` | toolset `ARM-ADS → ARM-GNU`; GNU macros/include paths/compile and link options filled in; startup file points to `gcc/startup_stm32f10x_md.s`; output directory and Create HEX restored; the leftover `V5.06 update 7` text in `pCCUsed` removed so asset scans do not misjudge it. Every `-Wno-*` suppression was ultimately removed in favour of fixing the source |
+| `gcc/startup_stm32f10x_md.s` | **new**. The original `Start/startup_stm32f10x_md.s` (armasm syntax) translated to GNU as syntax with an identical vector table order; `Reset_Handler` sets the stack, copies `.data`, clears `.bss`, calls `SystemInit` and `main` |
+| `gcc/stm32f103c8.ld` | **new**. Replaces the armlink scatter file: FLASH 0x08000000/64K, RAM 0x20000000/20K, `_estack = 0x20005000` |
+| `gcc/syscalls.c` | **new**. Minimal newlib syscall layer; `_write()` routes `printf` to USART1 (see "printf redirection" below) and removes six libnosys link warnings |
+| `FreeRTOS/port/port.c`, `portmacro.h` | **replaced** with the official FreeRTOS-Kernel V11.1.0 `portable/GCC/ARM_CM3` port. The old copies were RVDS/armcc versions using `__asm void vPortSVCHandler` and `__weak`, which GCC rejects |
+| `FreeRTOS/FreeRTOSConfig.h` | explicitly sets `configCHECK_HANDLER_INSTALLATION = 0` (see below) |
+| `Start/core_cm3.c` | output constraints of the three `__STREXB/__STREXH/__STREXW` inline asm blocks changed to `"=&r"`; the CMSIS V1.30 style makes GCC 15's assembler report `registers may not be the same` |
+| `gcc/libs/*.a` | `libgcc / libc_nano / libm / libnosys` (v7-m/nofp) copied out of the toolchain. Keil is installed under a Chinese path (`E:\腾讯电脑管家软件搬家\...`), where ld fails to pick up libraries, so they live on a pure-ASCII path |
+| `gcc/backup/` | **pre-change backups**: `Project.uvprojx.orig`, `port.c.orig`, `portmacro.h.orig`, `startup_stm32f10x_md.s.orig`, `TOOLS.INI.orig`, plus post-fix snapshots `PAN312x_Driver.c.fixed`, `at_command_firmware.c.fixed`, `FreeRTOSConfig.h.fixed` |
 
-### 启动弹窗 `Registered ARM Compiler Version not found in path: '.\ARMCC'`
+`TOOLS.INI` now has `[ARM] PATH1` pointing at `C:\Users\Ai\AppData\Local\Keil_v5\ARM\ARMCC\`, with `TOOLPREFIX=arm-none-eabi-` unchanged (PATH1 previously pointed at a GCC 9 directory that no longer exists).
 
-μVision 每次启动会校验 `[ARMADS]` 段登记的**每一个**编译器版本是否真实存在。
-原先还留着一条
+### Startup popup `Registered ARM Compiler Version not found in path: '.\ARMCC'`
+
+μVision checks at every start that **each** compiler version registered in `[ARMADS]` really exists. It still contained
 
 ```
 ARMCCPATH1=".\ARMCC"  ("V5.06 update 7 (build 960)")
 ```
 
-而 `.\ARMCC` 目录现在装的是 **GNU 工具链**（里面是 `arm-none-eabi-gcc.exe`，没有 `armcc.exe`），
-所以每次打开都弹这个警告。它只是校验告警，不影响编译，但会挡住自动化构建。
+while `.\ARMCC` now holds the **GNU toolchain** (`arm-none-eabi-gcc.exe`, no `armcc.exe`), so the warning popped up on every launch. It is only a validation warning and does not block compilation, but it does block automated builds.
 
-**处理方式**：删除 `[ARMADS]` 段里那条无效的 `ARMCCPATH1`，保留仍在使用的
-`ARMCCPATH0="ARMCLANG" ("V6.22")`（AC6 还装着）。同时把工程 `.uvprojx` 里的
-`<pCCUsed>` 改成 `0::Arm GNU Toolchain 15.3.1::GNU`，避免工程侧再指向 AC5。
+**Fix**: remove the invalid `ARMCCPATH1` entry from `[ARMADS]`, keeping the still-used `ARMCCPATH0="ARMCLANG" ("V6.22")` (AC6 is still installed), and set `<pCCUsed>` in `.uvprojx` to `0::Arm GNU Toolchain 15.3.1::GNU` so the project no longer points at AC5.
 
-注意 `[ARM] PATH1="...\ARM\ARMCC\"` 是 **GNU 工具链的安装路径**，不是编译器登记，
-必须保留；删了它 μVision 就找不到 `arm-none-eabi-gcc` 了。
-本机 `C:\Users\Ai\AppData\Local\Keil_v5\TOOLS.INI` 与
-`E:\腾讯电脑管家软件搬家\软件搬家\Keil μVision4\TOOLS.INI` 是同一文件的两个路径
-（硬链接/搬家映射），改一处即可，但建议核对两份 md5 一致。
-删除前的备份在 `gcc/backup/TOOLS.INI.before-<时间戳>` 与 `TOOLS.INI.E-drive.before-<时间戳>`。
+Note that `[ARM] PATH1="...\ARM\ARMCC\"` is the **GNU toolchain install path**, not a compiler registration, and must be kept; without it μVision cannot find `arm-none-eabi-gcc`. On this machine `C:\Users\Ai\AppData\Local\Keil_v5\TOOLS.INI` and `E:\腾讯电脑管家软件搬家\软件搬家\Keil μVision4\TOOLS.INI` are two paths to the same file (hard link / relocation mapping), so one edit suffices, but verify both md5 sums match. Pre-deletion backups are `gcc/backup/TOOLS.INI.before-<timestamp>` and `TOOLS.INI.E-drive.before-<timestamp>`.
 
-## 关键配置值（GUI 里对照用）
+## Key configuration values (for GUI cross-check)
 
-- Target → **C/C++ (GNU)** Define：`USE_STDPERIPH_DRIVER,STM32F10X_MD`
-- Include Paths：`.\Start;.\Library;.\User;.\FreeRTOS\inc;.\FreeRTOS\port;.\FreeRTOS\src;.\FreeRTOS;.\BSP\inc;.\PAN312x;.\hal_compat`
-- C/C++ Misc：`-mcpu=cortex-m3 -mthumb -std=gnu99 -ffunction-sections -fdata-sections`（已移除早期的 `-Wno-*`，改为真正修好代码）
-- Linker → Linker Script File：`.\gcc\stm32f103c8.ld`，**不要**再在 Misc 里写 `-T`（μVision 会自己加，重复会报错）
-- Linker Misc：`-mcpu=cortex-m3 -mthumb -nostdlib -nostartfiles -Wl,--gc-sections -L./gcc/libs -lgcc -lc_nano -lm -lgcc`
-  （路径一律用正斜杠，μVision 会吞掉反斜杠；`--gc-sections` 必须带 `-Wl,`，否则 FLASH 会溢出约 15 KB。
-  **不要加 `-lnosys`**：它的 `_write` 是强符号，会和 `gcc/syscalls.c` 里的真实实现冲突）
-- `FreeRTOSConfig.h` 里已有的三行映射保持不动：
+- Target → **C/C++ (GNU)** Define: `USE_STDPERIPH_DRIVER,STM32F10X_MD`
+- Include Paths: `.\Start;.\Library;.\User;.\FreeRTOS\inc;.\FreeRTOS\port;.\FreeRTOS\src;.\FreeRTOS;.\BSP\inc;.\PAN312x;.\hal_compat`
+- C/C++ Misc: `-mcpu=cortex-m3 -mthumb -std=gnu99 -ffunction-sections -fdata-sections` (the early `-Wno-*` flags are gone; the code was fixed instead)
+- Linker → Linker Script File: `.\gcc\stm32f103c8.ld`; do **not** add `-T` in Misc (μVision adds it and duplicates cause errors)
+- Linker Misc: `-mcpu=cortex-m3 -mthumb -nostdlib -nostartfiles -Wl,--gc-sections -L./gcc/libs -lgcc -lc_nano -lm -lgcc`
+  (always use forward slashes, μVision swallows backslashes; `--gc-sections` must carry `-Wl,`, otherwise FLASH overflows by about 15 KB. **Do not add `-lnosys`**: its `_write` is a strong symbol and conflicts with the real implementation in `gcc/syscalls.c`)
+- Keep the three mappings already in `FreeRTOSConfig.h`:
   `#define xPortPendSVHandler PendSV_Handler` / `vPortSVCHandler SVC_Handler` / `xPortSysTickHandler SysTick_Handler`
 
-## 实测结果
+## Measured results
 
-| 构建方式 | text | data | bss | 结果 |
-|---|---|---|---|---|
-| μVision Rebuild | 44676 | 152 | 16368 | **0 Error，0 Warning**，`UV4 exit=0`，生成 `Objects/Project.hex` |
-| `gcc/build.ps1` | 41256 | 152 | 16360 | **0 Error，0 Warning**，生成 `gcc/build/Project.hex` |
+| Build | text | data | bss | Result |
+|-------|------|------|-----|--------|
+| μVision Rebuild | 44676 | 152 | 16368 | **0 Error, 0 Warning**, `UV4 exit=0`, `Objects/Project.hex` produced |
+| `gcc/build.ps1` | 41256 | 152 | 16360 | **0 Error, 0 Warning**, `gcc/build/Project.hex` produced |
 
-两者都远小于 64 KB FLASH / 20 KB RAM，且**没有任何 `-Wno-*` 屏蔽项**。向量表校验：
-`g_pfnVectors = 0x08000000`、`_estack = 0x20005000`、Reset_Handler `0x08001014`、
-SVCall/PendSV/SysTick 槽位分别指向 `0x08007481 / 0x080074d1 / 0x08007589`（均带 Thumb 位），
-说明迁移后的中断向量接线正确。
+Both are far below 64 KB FLASH / 20 KB RAM and **no `-Wno-*` suppression is used**. Vector table check: `g_pfnVectors = 0x08000000`, `_estack = 0x20005000`, `Reset_Handler` at `0x08001014`, and the SVCall/PendSV/SysTick slots point to `0x08007481 / 0x080074d1 / 0x08007589` (all with the Thumb bit), confirming the interrupt wiring after migration.
 
-## 顺带修掉的真实 bug（迁移后 GCC 把它们暴露出来）
+## Real bugs fixed (exposed by GCC after migration)
 
-原来的 armcc 对这几处不报警，GCC 报出来后逐个核实并修正：
+armcc did not warn about these; each was verified and fixed:
 
-| 位置 | 问题 | 影响 |
-|---|---|---|
-| **printf 输出通道** | `BSP/src/bsp_uart.c` 的 `fputc` 是 armcc 时代的重定向方式；**GCC + newlib 的 printf 走 `_write`，不走 `fputc`**。链接 `-lnosys` 时由空桩接管，日志里报 6 条 `_close/_fstat/_isatty/_lseek/_read/_write is not implemented and will always fail` | **所有 `printf` 的 AT 回显被静默丢弃，串口一个字符都不输出**。这不是无害噪音，是功能性缺陷 |
-| `User/at_command_firmware.c` | `tx_cnt/rx_cnt/rx_error_cnt` 是 `uint32_t`，却用 `PRIu16` 打印 | **AT 指令回显的计数值被截断成 16 位**，计数超过 65535 后回显错误 |
-| `User/at_command_firmware.c` | `FrequencyBase/DataRate/TxDeviation/RxDeviation`（`uint32_t`）用 `%u` 打印 | 64 位平台下格式不匹配（本平台无害，但不可移植） |
-| `PAN312x_Driver.c` `PAN312x_Wait_Ready` | `time_out` 未初始化 | 首次判断即为随机值，等待逻辑不可靠 |
-| `PAN312x_Driver.c` `PAN312x_Set_Crc` | `CrcPolynomial` 未初始化，`switch` 的 `default` 分支不赋值 | **传入非法 CRC 索引时会把随机多项式写进芯片** |
-| `PAN312x_Driver.c` `PAN312x_Set_Rx_Deviation` | `data_rate` 未初始化，且速率表只覆盖到 500kbps | 1M/2Mbps 下用随机值算频偏 |
-| `PAN312x_Driver.c` `PAN312x_Set_Frequency` / `_b` | `base_frequency_tmp`、`mid_frequency_tmp`、`tmp_freq` 未初始化，频段 if/else 无兜底 | **频率超出支持范围时用垃圾值配置射频** |
-| `PAN312x_Driver.c` `PAN312x_Set_Symbol_RateB` | `symbol_rate_b` 未初始化，速率表无兜底 | 不支持的速率会写入非法符号率 |
-| `PAN312x_Driver.c` `PAN312x_CTK_Set_Power` | `PowerSelect` 未初始化，封装/供电组合无兜底 | 非法组合下按随机供电模式配置 |
-| `PAN312x_Driver.c` `PAN312x_Set_CrcByteSwap` | 参数类型是 `PAN312xCrcByteSwap`，却和 `CRC_BIT_ORDER_*`（位序枚举）比较，触发 `-Wenum-compare` | 两个枚举数值恰好都是 0/1，**当前功能碰巧等价**，但类型用错且语义误导；已改为 `CRC_BYTE_MSB_FIRST/CRC_BYTE_LSB_FIRST` |
-| `PAN312x_Driver.c` `PAN312xRaw_ReadAddrB4` / `PAN312xReg_ReadB4` / `PAN312x_Get_ChipState` | 读取失败时忽略返回值，返回未初始化的数据 | **SPI 读失败时返回随机值**（原 armcc 同样不报） |
-| `PAN312x_Driver.c` 两点校准函数 | `tx_dev`/`ref_diff`/`data_rate_index` 未初始化 | 校准参数可能为随机值 |
+| Location | Problem | Impact |
+|----------|---------|--------|
+| **printf output path** | `BSP/src/bsp_uart.c` used an armcc-era `fputc` redirection; **GCC + newlib printf goes through `_write`, not `fputc`**. With `-lnosys` an empty stub handled it and the log showed six `_close/_fstat/_isatty/_lseek/_read/_write is not implemented and will always fail` | **All AT echo from `printf` was silently dropped — not a single character on the UART.** A functional defect, not harmless noise |
+| `User/at_command_firmware.c` | `tx_cnt/rx_cnt/rx_error_cnt` are `uint32_t` but printed with `PRIu16` | **Counter values in AT replies truncated to 16 bits**, wrong once above 65535 |
+| `User/at_command_firmware.c` | `FrequencyBase/DataRate/TxDeviation/RxDeviation` (`uint32_t`) printed with `%u` | format mismatch on 64-bit platforms (harmless here, not portable) |
+| `PAN312x_Driver.c` `PAN312x_Wait_Ready` | `time_out` uninitialised | first comparison uses a random value, unreliable wait logic |
+| `PAN312x_Driver.c` `PAN312x_Set_Crc` | `CrcPolynomial` uninitialised and the `switch` `default` branch assigns nothing | **an invalid CRC index writes a random polynomial into the chip** |
+| `PAN312x_Driver.c` `PAN312x_Set_Rx_Deviation` | `data_rate` uninitialised and the rate table only reaches 500 kbps | deviation computed from a random value at 1M/2M bps |
+| `PAN312x_Driver.c` `PAN312x_Set_Frequency` / `_b` | `base_frequency_tmp`, `mid_frequency_tmp`, `tmp_freq` uninitialised, band if/else has no fallback | **out-of-range frequencies configure the radio with garbage** |
+| `PAN312x_Driver.c` `PAN312x_Set_Symbol_RateB` | `symbol_rate_b` uninitialised, no fallback in the rate table | unsupported rates write an illegal symbol rate |
+| `PAN312x_Driver.c` `PAN312x_CTK_Set_Power` | `PowerSelect` uninitialised, no fallback for package/supply combinations | illegal combinations configure a random supply mode |
+| `PAN312x_Driver.c` `PAN312x_Set_CrcByteSwap` | parameter type `PAN312xCrcByteSwap` compared against `CRC_BIT_ORDER_*` (bit-order enum), triggering `-Wenum-compare` | the two enum values happen to be 0/1 so the behaviour is **accidentally equivalent**, but the type is wrong and misleading; changed to `CRC_BYTE_MSB_FIRST/CRC_BYTE_LSB_FIRST` |
+| `PAN312x_Driver.c` `PAN312xRaw_ReadAddrB4` / `PAN312xReg_ReadB4` / `PAN312x_Get_ChipState` | return value ignored on read failure, uninitialised data returned | **random values on SPI read failure** (armcc did not warn either) |
+| `PAN312x_Driver.c` two-point calibration | `tx_dev`/`ref_diff`/`data_rate_index` uninitialised | calibration parameters may be random |
 
-### printf 重定向（0 Warning 的关键一步）
+### printf redirection (the key to 0 Warning)
 
-新增 `gcc/syscalls.c`，提供 newlib 需要的最小系统调用层：
+New `gcc/syscalls.c` provides the minimal newlib syscall layer:
 
-- `_write()`：逐字节调用 `BSP/src/bsp_uart.c` 里已有的 `fputc()`（USART1 阻塞发送），
-  **返回实际写入的字节数**；返回 0 会让 newlib 认为写出错并丢弃后续输出。
-  这样既复用了原有串口驱动，又让 `printf` 真正走通。
-- 其余 `_read/_close/_fstat/_isatty/_lseek/_getpid/_kill/_exit/_sbrk` 为裸机环境的最小桩；
-  `_sbrk` 从链接脚本的 `end` 向上增长，留出 `_Min_Stack_Size`（2 KB）给栈。
-- 同时从链接行**移除 `-lnosys`**（它的 `_write` 是强符号，会与我们的实现冲突），
-  6 条 `not implemented and will always fail` 警告随之消失。
-- 已挂到 `Project.uvprojx` 的 `Start` 组和 `gcc/build.ps1` 的源文件列表，两条构建路径都会编译它。
+- `_write()`: calls the existing `fputc()` in `BSP/src/bsp_uart.c` byte by byte (blocking USART1) and **returns the number of bytes actually written**; returning 0 makes newlib treat the write as failed and drop further output. This reuses the original UART driver and makes `printf` work.
+- The other `_read/_close/_fstat/_isatty/_lseek/_getpid/_kill/_exit/_sbrk` are minimal bare-metal stubs; `_sbrk` grows upward from the linker script's `end`, leaving `_Min_Stack_Size` (2 KB) for the stack.
+- `-lnosys` was **removed** from the link line (its `_write` is a strong symbol that conflicts with our implementation), and the six `not implemented and will always fail` warnings disappeared with it.
+- It is added to the `Start` group in `Project.uvprojx` and to the source list of `gcc/build.ps1`, so both build paths compile it.
 
-验证：`arm-none-eabi-nm Objects/Project.elf` 中 `_write` 等均为 `T` 强符号且 `printf` 已链接，
-ELF 中不再引用 libnosys。上板后串口 115200 应能看到 `+CLEARCNT` 等 AT 回显。
+Verification: in `arm-none-eabi-nm Objects/Project.elf`, `_write` and friends are `T` strong symbols, `printf` is linked, and the ELF no longer references libnosys. On hardware the UART at 115200 shows AT replies such as `+CLEARCNT`.
 
-另：`PAN312x_Hal.c` 两个 DMA 句柄（`pan312x_hdma_tx/rx`）只在注释掉的代码块里被引用，
-加 `__attribute__((unused))` 明确标记"有意保留"，而不是删掉或靠 `-Wno-unused-variable` 压制。
+Also: the two DMA handles in `PAN312x_Hal.c` (`pan312x_hdma_tx/rx`) are referenced only inside commented-out code, so they are marked `__attribute__((unused))` as intentionally kept rather than deleted or suppressed with `-Wno-unused-variable`.
 
-修复原则：**不是简单加初始化了事**。凡是"某分支不赋值就往下走"的地方，都补了
-`else { return; }` 兜底，让非法输入直接退出而不是带着垃圾值继续写芯片。
+Repair principle: **not simply adding initialisers**. Wherever a branch could fall through without assigning, an `else { return; }` guard was added so invalid input exits instead of writing garbage to the chip.
 
-### 关于中断向量接线与运行期自检
+### Interrupt wiring and runtime self-check
 
-迁移后最需要确认的是"向量表是否真的指向 FreeRTOS 的 handler"。已用
-`arm-none-eabi-nm` / `objdump` 对最终 `Project.elf` 静态核对：
+What matters most after migration is that the vector table really points at the FreeRTOS handlers. Verified statically on the final `Project.elf` with `arm-none-eabi-nm` / `objdump`:
 
-- `g_pfnVectors = 0x08000000`，`_estack = 0x20005000`
-- 槽位 11 (SVCall) → `0x08007501` = `SVC_Handler` (`0x08007500` + Thumb 位)
-- 槽位 14 (PendSV) → `0x08007551` = `PendSV_Handler`
-- 槽位 15 (SysTick) → `0x08007625` = `SysTick_Handler`
+- `g_pfnVectors = 0x08000000`, `_estack = 0x20005000`
+- slot 11 (SVCall) → `0x08007501` = `SVC_Handler` (`0x08007500` + Thumb bit)
+- slot 14 (PendSV) → `0x08007551` = `PendSV_Handler`
+- slot 15 (SysTick) → `0x08007625` = `SysTick_Handler`
 
-`FreeRTOSConfig.h` 里保留了原有的三行 `#define`，把移植层的
-`vPortSVCHandler/xPortPendSVHandler/xPortSysTickHandler` 映射到这些符号，接线正确。
+The three `#define`s already present in `FreeRTOSConfig.h` map the port's `vPortSVCHandler/xPortPendSVHandler/xPortSysTickHandler` onto these symbols, so the wiring is correct.
 
-**为什么不启用运行期自检**：`FreeRTOS.h` 里 `configCHECK_HANDLER_INSTALLATION` 默认是 1，
-且会要求同时定义 `configASSERT()`；而一旦定义 `configASSERT()`，
-`configASSERT_DEFINED` 就变成 1，会连带启用 `vPortValidateInterruptPriority()` 等
-**全部** FreeRTOS 内部断言。这份固件尚未在硬件上回归，擅自启用可能让原本能跑的
-中断路径直接卡在断言里。因此显式设为 0，用上面的静态核对替代。
-若要在硬件上做一次带自检的验证，把该宏改成 1 并补上 `configASSERT()` 即可。
+**Why the runtime self-check stays off**: in `FreeRTOS.h`, `configCHECK_HANDLER_INSTALLATION` defaults to 1 and also requires `configASSERT()` to be defined; once defined, `configASSERT_DEFINED` becomes 1 and enables **all** FreeRTOS internal assertions such as `vPortValidateInterruptPriority()`. This firmware has not been regression-tested on hardware, so enabling them could stall working interrupt paths on an assertion. It is therefore explicitly set to 0 and replaced by the static check above. For a hardware run with the self-check, set the macro to 1 and supply `configASSERT()`.
 
-### 关于 `-Wno-*`
+### About `-Wno-*`
 
-工程里曾临时加过 `-Wno-maybe-uninitialized -Wno-unused-variable` 来压掉告警，
-**现已全部移除**，改为真正修好代码。当前是 **0 Error / 0 Warning**，且没有任何告警被屏蔽。
+The project temporarily used `-Wno-maybe-uninitialized -Wno-unused-variable` to silence warnings. **All of them are removed** and the code is fixed instead. The build is now **0 Error / 0 Warning** with no warnings suppressed.
 
+## Compliance wrap-up suggestions
 
-## 合规收尾建议
+1. ARM Compiler 5.06u7 was **not** reinstalled; the whole build uses only Arm GNU Toolchain 15.3.1 (open source, no license server).
+2. The invalid `ARMCCPATH1=".\ARMCC" ("V5.06 update 7 (build 960)")` entry in `[ARMADS]` (the root cause of the μVision startup popup) has been removed, and both projects' `<pCCUsed>` now read `0::Arm GNU Toolchain 15.3.1::GNU`. If AC5 uninstall entries remain under "Apps & features", clean them up per the asset ledger.
+3. Consider moving the toolchain out of `...\Keil_v5\ARM\ARMCC` into its own directory (e.g. `C:\arm-gnu-toolchain`), then updating `[ARM] PATH1` in `TOOLS.INI` and `-ToolchainBin` in `build.ps1`, so path-based asset scans do not misclassify it.
+4. Register the replacement version `Arm GNU Toolchain 15.3.1` in the ledger with the `arm-none-eabi-gcc --version` output. The μVision IDE itself is still commercial software (MDK-Pro licensed here); building with GCC does not replace the Keil IDE licence.
 
-1. 本次**没有**装回 ARM Compiler 5.06u7；构建全程只用 Arm GNU Toolchain 15.3.1（开源、无需 license 服务器）。
-2. `TOOLS.INI` 的 `[ARMADS]` 段里那条无效的 `ARMCCPATH1=".\ARMCC" ("V5.06 update 7 (build 960)")`
-   已删除（μVision 每次启动弹 "Registered ARM Compiler Version not found in path: '.\ARMCC'" 的根因），
-   两个工程的 `<pCCUsed>` 也已改成 `0::Arm GNU Toolchain 15.3.1::GNU`。
-   若"应用和功能"里仍残留 AC5 的卸载项，按台账要求清理。
-3. 建议后续把工具链从 `...\Keil_v5\ARM\ARMCC` 挪到独立目录（如 `C:\arm-gnu-toolchain`），
-   然后同步改 `TOOLS.INI` 的 `[ARM] PATH1` 和 `build.ps1` 的 `-ToolchainBin`，避免被资产扫描按路径误判。
-4. 台账登记替代版本 `Arm GNU Toolchain 15.3.1`，附 `arm-none-eabi-gcc --version` 输出；
-   μVision IDE 本身仍是商业软件（本机为 MDK-Pro 授权），用 GCC 编译不替代 Keil 的 IDE 授权。
+## Rollback
 
-## 回退（若要恢复原状）
-
-把 `gcc/backup/` 里 5 个 `.orig` 文件按原名拷回原位，并在 μVision 里
-`Project → Manage → Project Items → Folders/Extensions` 取消 **Use GNU Compiler**
-（工具集切回 ARM-ADS）。注意：回退后若 AC5 二进制仍缺失，工程依旧无法编译——
-那正是本次迁移要解决的问题。
+Copy the five `.orig` files in `gcc/backup/` back under their original names and clear **Use GNU Compiler** in μVision under
+`Project → Manage → Project Items → Folders/Extensions` (toolset back to ARM-ADS). Note that after rollback the project still will not build if the AC5 binaries are missing — which is exactly the problem this migration solved.
